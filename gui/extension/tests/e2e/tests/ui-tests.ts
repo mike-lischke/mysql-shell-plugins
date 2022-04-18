@@ -33,10 +33,12 @@ import {
     InputBox,
     WebElement,
     Key as seleniumKey,
+    TextEditor,
+    ModalDialog,
 } from "vscode-extension-tester";
 
 import { before, after, afterEach } from "mocha";
-
+import { keyboard, Key as nutKey } from "@nut-tree/nut-js";
 import addContext from "mochawesome/addContext";
 
 import fs from "fs/promises";
@@ -66,12 +68,16 @@ import {
     waitForShell,
     reloadVSCode,
     isCertificateInstalled,
+    isJson,
+    isDefaultItem,
+    hasTreeChildren,
+    waitForLoading,
 } from "../lib/helpers";
 
 import { ChildProcess } from "child_process";
 import { platform } from "os";
 
-describe("MySQL Shell for VS", () => {
+describe("MySQL Shell for VS Code", () => {
     let browser: VSBrowser;
     let driver: WebDriver;
 
@@ -131,7 +137,7 @@ describe("MySQL Shell for VS", () => {
     });
 
     afterEach(async function() {
-        if(this.currentTest?.state === "failed") {
+        if (this.currentTest?.state === "failed") {
             const img = await driver.takeScreenshot();
             const testName = this.currentTest?.title;
             try {
@@ -144,6 +150,33 @@ describe("MySQL Shell for VS", () => {
 
             addContext(this, { title: "Failure", value: `../${imgPath}` });
         }
+    });
+
+    after(async () =>{
+        
+        await selectMoreActionsItem(driver, "DATABASE", "Reset MySQL Shell for VS Code Extension");
+            let notifications = await new Workbench().getNotifications();
+            expect(await notifications[0].getMessage())
+                .to.contain("This will completely reset the MySQL Shell for VS Code extension by deleting");
+
+            const buttons = await notifications[0].getActions();
+            for(const button of buttons) {
+                const title = button.getTitle();
+                if ( title === "Reset VS Code" || title === "Reset Extension" ) {
+                    await notifications[0].takeAction(title);
+                }
+            }
+
+            await waitForSystemDialog(driver, true);
+            await writePassword(driver);
+
+            notifications = await new Workbench().getNotifications();
+            expect(await notifications[0].getMessage())
+                .to.contain("The MySQL Shell for VS Code extension has been reset.");
+
+            await notifications[0].takeAction("Restart VS Code");
+            await driver.sleep(2000);
+
     });
 
     describe("DATABASE toolbar action tests", () => {
@@ -311,7 +344,7 @@ describe("MySQL Shell for VS", () => {
             const buttons = await notifications[0].getActions();
             for(const button of buttons) {
                 const title = button.getTitle();
-                if( title === "Reset VS Code" || title === "Reset Extension" ) {
+                if ( title === "Reset VS Code" || title === "Reset Extension" ) {
                     await notifications[0].takeAction(title);
                 }
             }
@@ -336,7 +369,7 @@ describe("MySQL Shell for VS", () => {
     describe("DATABASE tests", () => {
 
         before(async () => {
-            if(platform() === "win32") {
+            if (platform() === "win32") {
                 await initTree("DATABASE");
             }
 
@@ -361,6 +394,12 @@ describe("MySQL Shell for VS", () => {
 
         afterEach(async () => {
             await driver.switchTo().defaultContent();
+
+            await toggleSection(driver, "DATABASE", true);
+            await toggleSection(driver, "ORACLE CLOUD INFRASTRUCTURE", false);
+            await toggleSection(driver, "MYSQL SHELL CONSOLES", false);
+            await toggleSection(driver, "MYSQL SHELL TASKS", false);
+
             const edView = new EditorView();
             const editors = await edView.getOpenEditorTitles();
             for (const editor of editors) {
@@ -420,14 +459,8 @@ describe("MySQL Shell for VS", () => {
             await driver.switchTo().defaultContent();
 
             await toggleSection(driver, "MYSQL SHELL CONSOLES", true);
-            try {
-                expect(await getTreeElement(driver,
-                    "ORACLE CLOUD INFRASTRUCTURE", "Session to " + conn.caption)).to.exist;
-            } catch(e) {
-                throw new Error(String(e));
-            } finally {
-                await toggleSection(driver, "MYSQL SHELL CONSOLES", false);
-            }
+            expect(await getTreeElement(driver,
+                "ORACLE CLOUD INFRASTRUCTURE", "Session to " + conn.caption)).to.exist;
 
         });
 
@@ -1057,10 +1090,618 @@ describe("MySQL Shell for VS", () => {
 
     });
 
+    describe("ORACLE CLOUD INFRASTRUCTURE tests", () => {
+
+        before(async () => {
+            if (platform() === "win32") {
+                await initTree("ORACLE CLOUD INFRASTRUCTURE");
+            }
+
+            await toggleSection(driver, "DATABASE", false);
+            await toggleSection(driver, "ORACLE CLOUD INFRASTRUCTURE", true);
+            await toggleSection(driver, "MYSQL SHELL CONSOLES", false);
+            await toggleSection(driver, "MYSQL SHELL TASKS", false);
+        });
+
+        afterEach(async () => {
+            await driver.switchTo().defaultContent();
+
+            await toggleSection(driver, "DATABASE", false);
+            await toggleSection(driver, "ORACLE CLOUD INFRASTRUCTURE", true);
+            await toggleSection(driver, "MYSQL SHELL CONSOLES", false);
+            await toggleSection(driver, "MYSQL SHELL TASKS", false);
+
+            const edView = new EditorView();
+            const editors = await edView.getOpenEditorTitles();
+            for (const editor of editors) {
+                await edView.closeEditor(editor);
+                try {
+                    const dialog = new ModalDialog();
+                    await dialog.pushButton("Don't Save");
+                } catch (e) {
+                    //continue
+                }
+            }
+        });
+
+        it("Configure the OCI profile list and refresh", async () => {
+
+            let btn = await getLeftSectionButton(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "Configure the OCI Profile list");
+            await btn.click();
+
+            const editors = await new EditorView().getOpenEditorTitles();
+            expect(editors).to.include.members(["config"]);
+
+            const textEditor = new TextEditor();
+
+            await textEditor.setTextAtLine(await textEditor.getNumberOfLines(), "[E2ETESTS]");
+            await keyboard.type(nutKey.Enter);
+            await textEditor
+                .typeText("user=ocid1.user.oc1..aaaaaaaan67cojwa52khe44xtpqsygzxlk4te6gqs7nkmyabcju2w5wlxcpq");
+
+            await keyboard.type(nutKey.Enter);
+
+            await textEditor.typeText("fingerprint=15:cd:e2:11:ed:0b:97:c4:e4:41:c5:44:18:66:72:80");
+            await keyboard.type(nutKey.Enter);
+            await textEditor
+                .typeText("tenancy=ocid1.tenancy.oc1..aaaaaaaaasur3qcs245czbgrlyshd7u5joblbvmxddigtubzqcfo5mmi2z3a");
+
+            await keyboard.type(nutKey.Enter);
+            await textEditor.typeText("region=us-ashburn-1");
+
+            await keyboard.type(nutKey.Enter);
+            await textEditor.typeText("key_file= ~/.oci/id_rsa_e2e.pem");
+
+            await textEditor.save();
+
+            btn = await getLeftSectionButton(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "Reload the OCI Profile list");
+            await btn.click();
+
+            await driver.wait(async () => {
+                return existsTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS (us-ashburn-1)");
+            }, 5000, "E2ETESTS (us-ashburn-1) tree item was not found");
+
+        });
+
+        it("View Config Profile Information", async () => {
+
+            await selectContextMenuItem(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "E2ETESTS (us-ashburn-1)", "ociProfile", "View Config Profile Information");
+
+            const editors = await new EditorView().getOpenEditorTitles();
+            expect(editors).to.include.members(["E2ETESTS Info.json"]);
+
+            const textEditor = new TextEditor();
+            await driver.wait(async () => {
+                return (await textEditor.getText()).length > 0;
+            }, 3000, "No text was found on file");
+
+            expect(isJson(await textEditor.getText())).to.equals(true);
+
+        });
+
+        //has bug: https://mybug.mysql.oraclecorp.com/orabugs/site/bug.php?id=34062646
+        it.skip("Set as New Default Config Profile", async () => {
+
+            await selectContextMenuItem(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "E2ETESTS (us-ashburn-1)", "ociProfile", "Set as New Default Config Profile");
+
+            expect(await isDefaultItem(driver, "profile", "E2ETESTS (us-ashburn-1)")).to.equals(true);
+
+            await toggleSection(driver, "MYSQL SHELL CONSOLES", true);
+
+            const btn = await getLeftSectionButton(driver, "MYSQL SHELL CONSOLES", "Add a New MySQL Shell Console");
+            await btn.click();
+
+            const editors = await new EditorView().getOpenEditorTitles();
+            expect(editors).to.include.members(["MySQL Shell Consoles"]);
+
+            await driver.switchTo().frame(0);
+            await driver.switchTo().frame(await driver.findElement(By.id("active-frame")));
+            await driver.switchTo().frame(await driver.findElement(By.id("frame:MySQL Shell Consoles")));
+
+            await driver.wait(until.elementLocated(By.id("shellEditorHost")), 10000, "Console was not loaded");
+
+            const textArea = await driver.findElement(By.css("textArea"));
+            await enterCmd(driver, textArea, "mds.get.currentConfigProfile()", 60000);
+
+            const zoneHost = await driver.findElements(By.css(".zoneHost"));
+            const result = await zoneHost[zoneHost.length - 1].findElement(By.css("code")).getText();
+
+            expect(result).to.equals("E2ETESTS");
+
+        });
+
+        it("View Compartment Information and set it as Current", async () => {
+
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS", true);
+
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 40000);
+
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS");
+
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "Root Compartment", true);
+
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE", "Root Compartment");
+
+            await driver.wait(async () => {
+                return existsTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "QA");
+            }, 10000, "QA compartment does not exist");
+
+            await selectContextMenuItem(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "QA", "ociCompartment", "View Compartment Information");
+
+            let editors = await new EditorView().getOpenEditorTitles();
+            expect(editors).to.include.members(["QA Info.json"]);
+
+            const textEditor = new TextEditor();
+            await driver.wait(async () => {
+                return (await textEditor.getText()).indexOf("{") !== -1;
+            }, 5000, "No text was found inside QA Info.json");
+
+            const json = await textEditor.getText();
+            expect(isJson(json)).to.equals(true);
+
+            const parsed = JSON.parse(json);
+            const compartmentId = parsed.id;
+
+            await selectContextMenuItem(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "QA", "ociCompartment", "Set as Current Compartment");
+
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+
+            expect(await isDefaultItem(driver, "compartment", "QA")).to.be.true;
+
+            expect(await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS", "QA")).to.be.true;
+
+            await toggleSection(driver, "MYSQL SHELL CONSOLES", true);
+            const btn = await getLeftSectionButton(driver, "MYSQL SHELL CONSOLES", "Add a New MySQL Shell Console");
+            await btn.click();
+
+            editors = await new EditorView().getOpenEditorTitles();
+            expect(editors).to.include.members(["MySQL Shell Consoles"]);
+
+            await driver.switchTo().frame(0);
+            await driver.switchTo().frame(await driver.findElement(By.id("active-frame")));
+            await driver.switchTo().frame(await driver.findElement(By.id("frame:MySQL Shell Consoles")));
+
+            await driver.wait(until.elementLocated(By.id("shellEditorHost")), 20000, "Console was not loaded");
+
+            const textArea = await driver.findElement(By.css("textArea"));
+            await enterCmd(driver, textArea, "mds.get.currentCompartmentId()", 60000);
+
+            const zoneHost = await driver.findElements(By.css(".zoneHost"));
+            const result = await zoneHost[zoneHost.length - 1].findElement(By.css("code")).getText();
+
+            expect(result).to.equals(compartmentId);
+
+        });
+
+        it("View DB System Information", async () => {
+
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS", true);
+
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 40000);
+
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS");
+
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "Root Compartment", true);
+
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "QA", true);
+
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "MySQLShellTesting", true);
+
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE", "MySQLShellTesting", "MDSforVSCodeExtension");
+
+            await selectContextMenuItem(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "MDSforVSCodeExtension", "ociDBSystem", "View DB System Information");
+
+            await driver.wait(async() => {
+                const editors = await new EditorView().getOpenEditorTitles();
+
+                return editors.includes("MDSforVSCodeExtension Info.json");
+            }, 5000, "MDSforVSCodeExtension Info.json was not opened");
+
+            const textEditor = new TextEditor();
+            await driver.wait(async () => {
+                return (await textEditor.getText()).indexOf("{") !== -1;
+            }, 5000, "No text was found inside MDSforVSCodeExtension Info.json");
+
+            const json = await textEditor.getText();
+            expect(isJson(json)).to.equals(true);
+
+        });
+
+        it("Create connection with Bastion Service", async () => {
+
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 40000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS");
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "Root Compartment", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "QA", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "MySQLShellTesting", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE", "MySQLShellTesting", "MDSforVSCodeExtension");
+
+            await selectContextMenuItem(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "MDSforVSCodeExtension", "ociDBSystem", "Create Connection with Bastion Service");
+
+            await driver.wait(async() => {
+                const editors = await new EditorView().getOpenEditorTitles();
+
+                return editors.includes("SQL Connections");
+            }, 5000, "SQL Connections was not opened");
+
+            await driver.wait(until.ableToSwitchToFrame(0), 5000, "not able to switch to frame 0");
+            await driver.wait(until.ableToSwitchToFrame(
+                By.id("active-frame")), 5000, "not able to switch to frame active-frame");
+            await driver.wait(until.ableToSwitchToFrame(
+                By.id("frame:SQL Connections")), 5000, "not able to switch to frame active-frame");
+
+            await driver.wait(async () => {
+                return (await driver.findElements(By.css(".confirmDialog"))).length > 0;
+            }, 10000, "Error getting the confirmDialog");
+
+            const confirmDialog = driver.findElement(By.css(".confirmDialog"));
+            expect(await confirmDialog.findElement(By.css(".title label")).getText()).to.equals("Create New Bastion");
+            const text = await confirmDialog.findElements(By.css(".content .container .gridCell"));
+            expect(await text[0].getText()).to
+                .equals("There is no Bastion in the compartment of this MySQL DB System that can be used.");
+
+            expect(await text[1].getText()).to
+                .equals("Do you want to create a new Bastion in the compartment of the MySQL DB System?");
+
+            await confirmDialog.findElement(By.id("accept")).click();
+
+            const newConDialog = await driver.wait(until.elementLocated(By.css(".valueEditDialog")),
+                10000, "Connection dialog was not loaded");
+
+            expect(await newConDialog.findElement(By.id("caption")).getAttribute("value"))
+                .to.equals("MDSforVSCodeExtension");
+
+            expect(await newConDialog.findElement(By.id("description")).getAttribute("value"))
+                .to.equals("DB System used to test the MySQL Shell for VSCode Extension.");
+
+            expect(await newConDialog.findElement(By.id("hostName")).getAttribute("value"))
+                .to.match(new RegExp(/(\d+).(\d+).(\d+).(\d+)/));
+
+            const loadingIcon = await newConDialog.findElement(By.id("loadingProgressIndicator"));
+            await driver.wait(until.stalenessOf(loadingIcon), 110000,
+                "'Waiting for bastion' loading icon was not removed");
+
+            await newConDialog.findElement(By.id("ok")).click();
+
+            await driver.switchTo().defaultContent();
+
+            expect(await getDB(driver, "MDSforVSCodeExtension")).to.exist;
+
+            expect(await existsTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "Bastion4PrivateSubnetStandardVnc"))
+                .to.be.true;
+
+            expect(await existsTreeElement(driver, "DATABASE", "MDSforVSCodeExtension"))
+                .to.be.true;
+
+        });
+
+        it("Start a DB System", async () => {
+
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 40000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS");
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "Root Compartment", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "QA", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "MySQLShellTesting", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "MySQLShellTesting", "MDSforVSCodeExtension");
+
+            const bottomBar = new BottomBarPanel();
+            const outputView = await bottomBar.openOutputView();
+            await outputView.clearText();
+
+            await selectContextMenuItem(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "MDSforVSCodeExtension", "ociDBSystem", "Start the DB System");
+
+            await toggleSection(driver, "ORACLE CLOUD INFRASTRUCTURE", false);
+            await toggleSection(driver, "MYSQL SHELL TASKS", true);
+            expect(await existsTreeElement(driver, "MYSQL SHELL TASKS", "Start DB System (running)")).to.be.true;
+
+            await driver.wait(async() => {
+                return (await outputView.getText()).indexOf("OCI profile 'E2ETESTS' loaded.") !== -1;
+            }, 30000, "No logs were found to check that E2ETESTS profile was loaded");
+
+            const notifications = await new Workbench().getNotifications();
+            expect(await notifications[0].getMessage()).to.contain("Are you sure you want to start the DB System");
+            await notifications[0].takeAction("Yes");
+
+            await driver.wait(async() => {
+                return (await outputView.getText())
+                    .indexOf("DB System 'MDSforVSCodeExtension' did start successfully") !== -1;
+            }, 30000, "No logs were found to check that DB System was started successfully");
+
+            expect(await existsTreeElement(driver, "MYSQL SHELL TASKS", "Start DB System (done)")).to.be.true;
+
+        });
+
+        it("Restart a DB System (and cancel)", async () => {
+
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 40000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS");
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "Root Compartment", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "QA", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "MySQLShellTesting", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "MySQLShellTesting", "MDSforVSCodeExtension");
+
+            const bottomBar = new BottomBarPanel();
+            const outputView = await bottomBar.openOutputView();
+            await outputView.clearText();
+
+            await selectContextMenuItem(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "MDSforVSCodeExtension", "ociDBSystem", "Restart the DB System");
+
+            await toggleSection(driver, "ORACLE CLOUD INFRASTRUCTURE", false);
+            await toggleSection(driver, "MYSQL SHELL TASKS", true);
+            expect(await existsTreeElement(driver, "MYSQL SHELL TASKS", "Restart DB System (running)")).to.be.true;
+
+            await driver.wait(async() => {
+                return (await outputView.getText()).indexOf("OCI profile 'E2ETESTS' loaded.") !== -1;
+            }, 50000, "No logs were found to check that E2ETESTS profile was loaded");
+
+            const notifications = await new Workbench().getNotifications();
+            expect(await notifications[0].getMessage()).to.contain("Are you sure you want to restart the DB System");
+            await notifications[0].takeAction("NO");
+
+            await driver.wait(async() => {
+                return (await outputView.getText())
+                    .indexOf("Operation cancelled") !== -1;
+            }, 10000, "No logs were found to check that DB System restart was cancelled");
+
+        });
+
+        it("Stop a DB System (and cancel)", async () => {
+
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 40000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS");
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "Root Compartment", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "QA", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "MySQLShellTesting", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "MySQLShellTesting", "MDSforVSCodeExtension");
+
+            const bottomBar = new BottomBarPanel();
+            const outputView = await bottomBar.openOutputView();
+            await outputView.clearText();
+
+            await selectContextMenuItem(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "MDSforVSCodeExtension", "ociDBSystem", "Stop the DB System");
+
+            await toggleSection(driver, "ORACLE CLOUD INFRASTRUCTURE", false);
+            await toggleSection(driver, "MYSQL SHELL TASKS", true);
+            expect(await existsTreeElement(driver, "MYSQL SHELL TASKS", "Stop DB System (running)")).to.be.true;
+
+            await driver.wait(async() => {
+                return (await outputView.getText()).indexOf("OCI profile 'E2ETESTS' loaded.") !== -1;
+            }, 50000, "No logs were found to check that E2ETESTS profile was loaded");
+
+            const notifications = await new Workbench().getNotifications();
+            expect(await notifications[0].getMessage()).to.contain("Are you sure you want to stop the DB System");
+            await notifications[0].takeAction("NO");
+
+            await driver.wait(async() => {
+                return (await outputView.getText())
+                    .indexOf("Operation cancelled") !== -1;
+            }, 10000, "No logs were found to check that DB System stop was cancelled");
+
+        });
+
+        it("Delete a DB System (and cancel)", async () => {
+
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 40000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS");
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "Root Compartment", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "QA", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "MySQLShellTesting", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "MySQLShellTesting", "MDSforVSCodeExtension");
+
+            const bottomBar = new BottomBarPanel();
+            const outputView = await bottomBar.openOutputView();
+            await outputView.clearText();
+
+            await selectContextMenuItem(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "MDSforVSCodeExtension", "ociDBSystem", "Delete the DB System");
+
+            await toggleSection(driver, "ORACLE CLOUD INFRASTRUCTURE", false);
+            await toggleSection(driver, "MYSQL SHELL TASKS", true);
+            expect(await existsTreeElement(driver, "MYSQL SHELL TASKS", "Delete DB System (running)")).to.be.true;
+
+            await driver.wait(async() => {
+                return (await outputView.getText()).indexOf("OCI profile 'E2ETESTS' loaded.") !== -1;
+            }, 50000, "No logs were found to check that E2ETESTS profile was loaded");
+
+            const notifications = await new Workbench().getNotifications();
+            expect(await notifications[0].getMessage()).to.contain("Are you sure you want to delete");
+            await notifications[0].takeAction("NO");
+
+            await driver.wait(async() => {
+                return (await outputView.getText())
+                    .indexOf("Deletion aborted") !== -1;
+            }, 10000, "No logs were found to check that DB System deletion was cancelled");
+
+        });
+
+        it("Get Bastion Information and set it as current", async () => {
+
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 40000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS");
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "Root Compartment", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "QA", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "MySQLShellTesting", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "MySQLShellTesting", "Bastion4PrivateSubnetStandardVnc");
+
+            await selectContextMenuItem(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "Bastion4PrivateSubnetStandardVnc", "ociBastion", "Get Bastion Information");
+
+            await driver.wait(async() => {
+                const editors = await new EditorView().getOpenEditorTitles();
+
+                return editors.includes("Bastion4PrivateSubnetStandardVnc Info.json");
+            }, 5000, "Bastion4PrivateSubnetStandardVnc Info.json was not opened");
+
+            const textEditor = new TextEditor();
+            await driver.wait(async () => {
+                return (await textEditor.getText()).indexOf("{") !== -1;
+            }, 5000, "No text was found inside Bastion4PrivateSubnetStandardVnc Info.json");
+
+            const json = await textEditor.getText();
+            expect(isJson(json)).to.equals(true);
+
+            const parsed = JSON.parse(json);
+            const bastionId = parsed.id;
+
+            await selectContextMenuItem(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "Bastion4PrivateSubnetStandardVnc", "ociBastion", "Set as Current Bastion");
+
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+
+            expect(await isDefaultItem(driver, "bastion", "Bastion4PrivateSubnetStandardVnc")).to.be.true;
+
+            await toggleSection(driver, "MYSQL SHELL CONSOLES", true);
+            const btn = await getLeftSectionButton(driver, "MYSQL SHELL CONSOLES", "Add a New MySQL Shell Console");
+            await btn.click();
+
+            const editors = await new EditorView().getOpenEditorTitles();
+            expect(editors).to.include.members(["MySQL Shell Consoles"]);
+
+            await driver.switchTo().frame(0);
+            await driver.switchTo().frame(await driver.findElement(By.id("active-frame")));
+            await driver.switchTo().frame(await driver.findElement(By.id("frame:MySQL Shell Consoles")));
+
+            await driver.wait(until.elementLocated(By.id("shellEditorHost")), 20000, "Console was not loaded");
+
+            const textArea = await driver.findElement(By.css("textArea"));
+            await enterCmd(driver, textArea, "mds.get.currentBastionId()", 60000);
+
+            const zoneHost = await driver.findElements(By.css(".zoneHost"));
+            const result = await zoneHost[zoneHost.length - 1].findElement(By.css("code")).getText();
+
+            expect(result).to.equals(bastionId);
+
+        });
+
+        it("Refresh When Bastion Reaches Active State", async () => {
+
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 60000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS");
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "Root Compartment", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "QA", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "MySQLShellTesting", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "MySQLShellTesting", "Bastion4PrivateSubnetStandardVnc");
+
+            await toggleSection(driver, "MYSQL SHELL TASKS", true);
+
+            await selectContextMenuItem(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "Bastion4PrivateSubnetStandardVnc", "ociBastion", "Refresh When Bastion Reaches Active State");
+
+            expect(await existsTreeElement(driver,
+                "MYSQL SHELL TASKS", "Refresh Bastion (running)")).to.be.true;
+
+            const bottomBar = new BottomBarPanel();
+            const outputView = await bottomBar.openOutputView();
+
+            await driver.wait(async () => {
+                return (await outputView.getText()).indexOf("Task 'Refresh Bastion' completed successfully") !== -1;
+            }, 20000, "Not able to verify that bastion was refreshed successfully");
+
+            expect(await existsTreeElement(driver,
+                "MYSQL SHELL TASKS", "Refresh Bastion (done)")).to.be.true;
+        });
+
+        it("Delete Bastion", async () => {
+
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 40000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE", "E2ETESTS");
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "Root Compartment", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "QA", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await toggleTreeElement(driver, "ORACLE CLOUD INFRASTRUCTURE", "MySQLShellTesting", true);
+            await waitForLoading(driver, "ORACLE CLOUD INFRASTRUCTURE", 10000);
+            await hasTreeChildren(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "MySQLShellTesting", "MDSforVSCodeExtension");
+
+            const bottomBar = new BottomBarPanel();
+            const outputView = await bottomBar.openOutputView();
+            await outputView.clearText();
+
+            await selectContextMenuItem(driver, "ORACLE CLOUD INFRASTRUCTURE",
+                "Bastion4PrivateSubnetStandardVnc", "ociBastion", "Delete Bastion");
+
+            await toggleSection(driver, "ORACLE CLOUD INFRASTRUCTURE", false);
+            await toggleSection(driver, "MYSQL SHELL TASKS", true);
+            expect(await existsTreeElement(driver, "MYSQL SHELL TASKS", "Delete Bastion (running)")).to.be.true;
+
+            await driver.wait(async() => {
+                return (await outputView.getText()).indexOf("OCI profile 'E2ETESTS' loaded.") !== -1;
+            }, 50000, "No logs were found to check that E2ETESTS profile was loaded");
+
+            const notifications = await new Workbench().getNotifications();
+            expect(await notifications[0].getMessage()).to.contain("Are you sure you want to delete");
+            await notifications[0].takeAction("Yes");
+
+            await driver.wait(async() => {
+                return (await outputView.getText())
+                    .indexOf("Task 'Delete Bastion' completed successfully") !== -1;
+            }, 90000, "No logs were found to check that the bastion was deleted successfully");
+
+            expect(await existsTreeElement(driver, "MYSQL SHELL TASKS", "Delete Bastion (done)")).to.be.true;
+
+        });
+
+    });
+
     describe("MYSQL SHELL CONSOLES toolbar action tests", () => {
 
         before(async () => {
-            if(platform() === "win32") {
+            if (platform() === "win32") {
                 await initTree("MYSQL SHELL CONSOLES");
             }
 
