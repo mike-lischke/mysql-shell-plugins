@@ -13,7 +13,7 @@
     "eslint": "eslint ."
   },
   "dependencies": {
-    "preact": "10.26.9"
+    "preact": "10.26.10"
   },
   "devDependencies": {
     "@preact/preset-vite": "2.10.1",
